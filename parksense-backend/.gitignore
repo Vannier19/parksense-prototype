@@ -1,0 +1,5 @@
+# Abaikan folder library (ukurannya besar, tidak perlu di-upload)
+node_modules/
+
+# Abaikan file rahasia
+.env

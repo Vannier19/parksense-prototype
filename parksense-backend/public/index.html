@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parksense — Dashboard Real-time</title>
+
+    <!-- Import library Socket.io dari CDN (tidak perlu install) -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+      /* ===== STYLING DASHBOARD ===== */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: 'Segoe UI', sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+
+      .header h1 {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #38bdf8;
+      }
+
+      .header p { color: #94a3b8; margin-top: 8px; }
+
+      /* Status koneksi WebSocket */
+      #connection-status {
+        display: inline-block;
+        padding: 6px 16px;
+        border-radius: 99px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-top: 12px;
+      }
+
+      .status-connected {
+        background: #166534;
+        color: #bbf7d0;
+      }
+
+      .status-disconnected {
+        background: #7f1d1d;
+        color: #fecaca;
+      }
+
+      /* Grid slot parkir */
+      #slot-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 16px;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      /* Kartu setiap slot */
+      .slot-card {
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        transition: all 0.4s ease;
+        border: 2px solid transparent;
+      }
+
+      /* Warna kartu berdasarkan status */
+      .slot-card.terisi {
+        background: #450a0a;
+        border-color: #ef4444;
+      }
+
+      .slot-card.kosong {
+        background: #052e16;
+        border-color: #22c55e;
+      }
+
+      .slot-id {
+        font-size: 1.4rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .slot-zone {
+        font-size: 0.8rem;
+        color: #94a3b8;
+        margin-bottom: 12px;
+      }
+
+      .slot-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 99px;
+        font-size: 0.85rem;
+        font-weight: 700;
+      }
+
+      .badge-terisi { background: #ef4444; color: white; }
+      .badge-kosong { background: #22c55e; color: white; }
+
+      .slot-updated {
+        font-size: 0.7rem;
+        color: #64748b;
+        margin-top: 8px;
+      }
+
+      /* Log aktivitas */
+      .log-section {
+        max-width: 900px;
+        margin: 32px auto 0;
+      }
+
+      .log-section h2 {
+        font-size: 1rem;
+        color: #94a3b8;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      #activity-log {
+        background: #1e293b;
+        border-radius: 8px;
+        padding: 16px;
+        height: 150px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.82rem;
+      }
+
+      .log-entry { color: #94a3b8; margin-bottom: 4px; }
+      .log-entry span { color: #38bdf8; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>🚗 Parksense — Live Dashboard</h1>
+      <p>Data diperbarui secara real-time via WebSocket</p>
+      <div id="connection-status" class="status-disconnected">
+        ⚪ Menghubungkan...
+      </div>
+    </div>
+
+    <!-- Grid tempat kartu slot akan dimunculkan oleh JavaScript -->
+    <div id="slot-grid"></div>
+
+    <!-- Log aktivitas -->
+    <div class="log-section">
+      <h2>📋 Log Aktivitas</h2>
+      <div id="activity-log"></div>
+    </div>
+
+    <script>
+      // ============================================================
+      // KONEKSI KE WEBSOCKET SERVER
+      // ============================================================
+
+      // Hubungkan ke server yang sama dengan halaman ini
+      const socket = io();
+
+      const slotGrid = document.getElementById('slot-grid');
+      const statusEl = document.getElementById('connection-status');
+      const logEl = document.getElementById('activity-log');
+
+      // Objek untuk menyimpan semua kartu slot yang sudah dibuat
+      // Agar kita bisa update kartu yang sudah ada, bukan buat baru terus
+      const slotCards = {};
+
+      // ============================================================
+      // FUNGSI HELPER
+      // ============================================================
+
+      // Tambahkan baris ke log aktivitas
+      const addLog = (pesan) => {
+        const waktu = new Date().toLocaleTimeString('id-ID');
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = `<span>[${waktu}]</span> ${pesan}`;
+        logEl.prepend(entry); // Taruh di paling atas
+      };
+
+      // Buat atau update kartu slot di grid
+      const renderSlotCard = (slot) => {
+        const isOccupied = slot.status === 1;
+        const statusClass = isOccupied ? 'terisi' : 'kosong';
+        const badgeClass = isOccupied ? 'badge-terisi' : 'badge-kosong';
+        const badgeText = isOccupied ? '🔴 TERISI' : '🟢 KOSONG';
+        const updatedTime = new Date(slot.updatedAt).toLocaleTimeString('id-ID');
+
+        // Jika kartu slot ini BELUM ADA, buat elemen baru
+        if (!slotCards[slot.slot_id]) {
+          const card = document.createElement('div');
+          card.className = `slot-card ${statusClass}`;
+          card.id = `slot-${slot.slot_id}`;
+          slotGrid.appendChild(card);
+          slotCards[slot.slot_id] = card;
+        }
+
+        // Update isi kartu (baik yang baru maupun yang sudah ada)
+        slotCards[slot.slot_id].className = `slot-card ${statusClass}`;
+        slotCards[slot.slot_id].innerHTML = `
+          <div class="slot-id">${slot.slot_id}</div>
+          <div class="slot-zone">${slot.zone || 'Umum'}</div>
+          <span class="slot-badge ${badgeClass}">${badgeText}</span>
+          <div class="slot-updated">Update: ${updatedTime}</div>
+        `;
+      };
+
+      // ============================================================
+      // LISTENER EVENT WEBSOCKET
+      // ============================================================
+
+      // Saat berhasil terhubung ke server
+      socket.on('connect', () => {
+        statusEl.textContent = '🟢 Terhubung ke Server';
+        statusEl.className = 'status-connected';
+        addLog('Berhasil terhubung ke WebSocket server.');
+      });
+
+      // Saat menerima snapshot data awal (semua slot sekaligus)
+      socket.on('initial_data', (response) => {
+        addLog(`Menerima snapshot: ${response.data.length} slot parkir.`);
+        // Render semua slot dari snapshot
+        response.data.forEach((slot) => renderSlotCard(slot));
+      });
+
+      // Saat menerima update satu slot (dipanggil tiap ada perubahan)
+      socket.on('slot_update', (response) => {
+        const slot = response.data;
+        const statusText = slot.status === 1 ? 'TERISI 🔴' : 'KOSONG 🟢';
+        addLog(`Update: Slot <b>${slot.slot_id}</b> → ${statusText}`);
+        // Update hanya kartu yang berubah
+        renderSlotCard(slot);
+      });
+
+      // Saat koneksi terputus
+      socket.on('disconnect', () => {
+        statusEl.textContent = '🔴 Koneksi Terputus';
+        statusEl.className = 'status-disconnected';
+        addLog('Koneksi ke server terputus. Mencoba reconnect...');
+      });
+    </script>
+  </body>
+</html>

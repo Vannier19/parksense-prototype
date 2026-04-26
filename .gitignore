@@ -1,0 +1,8 @@
+# Mengabaikan semua folder node_modules di manapun posisinya
+node_modules/
+**/node_modules/
+
+# Mengabaikan file .env (yang berisi password database)
+.env
+**/.env
+parksense-backend/.env
