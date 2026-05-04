@@ -55,80 +55,97 @@ export const useParksense = () => {
   }, [addLog]);
 
   // ============================================================
+  // EFFECT: Initial data fetch on mount
+  // ============================================================
+  useEffect(() => {
+    // Fetch initial data on mount
+    // eslint-disable-next-line
+    fetchSlots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ============================================================
   // EFFECT: Setup WebSocket listeners
   // ============================================================
   useEffect(() => {
-    // Ambil data awal via REST API saat pertama kali
-    fetchSlots();
+    // ✨ Tambah log untuk debug
+    console.log('🔌 Setup WebSocket listeners...');
 
-    // --- Event: Koneksi berhasil ---
-    socket.on('connect', () => {
-      setIsConnected(true);
-      addLog('🟢 WebSocket terhubung ke server');
-    });
+  socket.on('connect', () => {
+    console.log('✅ WebSocket TERHUBUNG! Socket ID:', socket.id);
+    setIsConnected(true);
+    addLog('🟢 WebSocket terhubung ke server');
+  });
 
-    // --- Event: Koneksi terputus ---
-    socket.on('disconnect', () => {
-      setIsConnected(false);
-      addLog('🔴 WebSocket terputus, mencoba reconnect...');
-    });
+  socket.on('disconnect', (reason) => {
+    console.log('❌ WebSocket TERPUTUS! Alasan:', reason);
+    setIsConnected(false);
+    addLog('🔴 WebSocket terputus, mencoba reconnect...');
+  });
 
-    // --- Event: Update satu slot (dari simulator/IoT) ---
-    socket.on('slot_update', (response) => {
-      const updatedSlot = response.data;
+  socket.on('connect_error', (error) => {
+    // ✨ Tangkap error koneksi
+    console.error('❌ WebSocket ERROR:', error.message);
+    addLog(`❌ Gagal konek WebSocket: ${error.message}`);
+  });
 
-      // Update slot yang berubah di state
-      // Jika slot belum ada, tambahkan. Jika sudah ada, update.
-      setSlots((prevSlots) => {
-        const exists = prevSlots.find((s) => s.slot_id === updatedSlot.slot_id);
-        if (exists) {
-          return prevSlots.map((s) =>
-            s.slot_id === updatedSlot.slot_id ? updatedSlot : s
-          );
-        } else {
-          return [...prevSlots, updatedSlot];
-        }
+  socket.on('initial_data', (response) => {
+    // ✨ Cek apakah snapshot diterima
+    console.log('📦 initial_data diterima:', response.data.length, 'slot');
+    response.data.forEach((slot) => {
+      setSlots((prev) => {
+        const exists = prev.find((s) => s.slot_id === slot.slot_id);
+        if (exists) return prev.map((s) => s.slot_id === slot.slot_id ? slot : s);
+        return [...prev, slot];
       });
+    });
+  });
 
-      const statusText = updatedSlot.status === 1 ? '🔴 TERISI' : '🟢 KOSONG';
-      addLog(`Slot ${updatedSlot.slot_id} → ${statusText} (${updatedSlot.zone})`);
+  socket.on('slot_update', (response) => {
+    const updatedSlot = response.data;
+    // ✨ Cek apakah update diterima
+    console.log('📡 slot_update diterima:', updatedSlot.slot_id, '=', updatedSlot.status);
+
+    setSlots((prevSlots) => {
+      const exists = prevSlots.find((s) => s.slot_id === updatedSlot.slot_id);
+      if (exists) {
+        return prevSlots.map((s) =>
+          s.slot_id === updatedSlot.slot_id ? updatedSlot : s
+        );
+      } else {
+        return [...prevSlots, updatedSlot];
+      }
     });
 
-    // Cleanup: hapus listener saat komponen unmount
-    return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('slot_update');
-    };
-  }, [fetchSlots, addLog]);
+    const statusText = updatedSlot.status === 1 ? '🔴 TERISI' : '🟢 KOSONG';
+    addLog(`Slot ${updatedSlot.slot_id} → ${statusText} (${updatedSlot.zone})`);
+  });
 
-  // ============================================================
-  // COMPUTED VALUES: Hitung statistik dari data slots
-  // ============================================================
-  const stats = {
-    total: slots.length,
-    terisi: slots.filter((s) => s.status === 1).length,
-    kosong: slots.filter((s) => s.status === 0).length,
-    persenOkupansi: slots.length
-      ? Math.round((slots.filter((s) => s.status === 1).length / slots.length) * 100)
-      : 0,
+  return () => {
+    console.log('🧹 Cleanup WebSocket listeners');
+    socket.off('connect');
+    socket.off('disconnect');
+    socket.off('connect_error');
+    socket.off('initial_data');
+    socket.off('slot_update');
   };
+}, [addLog]);
 
-  // Kelompokkan slot berdasarkan zona
-  const slotsByZone = slots.reduce((acc, slot) => {
-    const zone = slot.zone || 'Umum';
-    if (!acc[zone]) acc[zone] = [];
-    acc[zone].push(slot);
-    return acc;
-  }, {});
-
+  // Return hook values
   return {
     slots,
-    stats,
-    slotsByZone,
     isConnected,
     isLoading,
     activityLog,
-    refetch: fetchSlots,
+    stats: {
+      kosong: slots.filter((s) => s.status === 0).length,
+      terisi: slots.filter((s) => s.status === 1).length,
+      persenOkupansi: slots.length > 0 ? Math.round((slots.filter((s) => s.status === 1).length / slots.length) * 100) : 0,
+    },
+    slotsByZone: slots.reduce((acc, slot) => {
+      if (!acc[slot.zone]) acc[slot.zone] = [];
+      acc[slot.zone].push(slot);
+      return acc;
+    }, {}),
   };
 };

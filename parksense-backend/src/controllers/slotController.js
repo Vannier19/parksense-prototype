@@ -83,7 +83,7 @@ const upsertSlot = async (req, res) => {
       { slot_id: slot_id },           // Kondisi pencarian
       { status: status, zone: zone }, // Data yang akan diupdate
       {
-        new: true,    // Kembalikan dokumen yang SUDAH diupdate (bukan yang lama)
+        returnDocument: 'after',    // Kembalikan dokumen yang SUDAH diupdate (bukan yang lama)
         upsert: true, // Buat dokumen baru jika tidak ditemukan
         runValidators: true, // Jalankan validasi skema saat update
       }

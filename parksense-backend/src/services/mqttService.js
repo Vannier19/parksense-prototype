@@ -12,13 +12,14 @@ const connectMQTT = () => {
 
   const client = mqtt.connect(brokerUrl);
 
+  // ✨ BARU: Handle saat client berhasil connect
   client.on('connect', () => {
-    console.log('✅ Terhubung ke MQTT Broker!');
-    client.subscribe(topic, { qos: 1 }, (err) => {
+    console.log(`✅ MQTT connected! Subscribing to: ${topic}`);
+    client.subscribe(topic, (err) => {
       if (err) {
-        console.error('❌ Gagal subscribe ke topik:', err);
+        console.error(`❌ Gagal subscribe ke topic '${topic}':`, err.message);
       } else {
-        console.log(`👂 Sedang mendengarkan topik: ${topic}`);
+        console.log(`✅ Subscribed ke topic: ${topic}`);
       }
     });
   });
@@ -28,24 +29,28 @@ const connectMQTT = () => {
       const pesanString = pesanBuffer.toString();
       const payload = JSON.parse(pesanString);
 
-      console.log(`📨 Pesan MQTT diterima:`, payload);
+      // ✨ Bedakan sumber data: hardware asli atau simulator
+      const sumber = payload.source === 'hardware' ? '🔧 HARDWARE' : '🤖 SIMULATOR';
+      console.log(`📨 [${sumber}] Pesan MQTT diterima:`, payload);
+
+      // ✨ Abaikan pesan heartbeat, tidak perlu disimpan ke DB
+      if (payload.type === 'heartbeat') {
+        console.log(`💓 Heartbeat dari ${payload.slot_id}`);
+        return;
+      }
 
       if (payload.slot_id === undefined || payload.status === undefined) {
         console.warn('⚠️ Payload tidak valid, abaikan.');
         return;
       }
 
-      // Simpan/update ke MongoDB (sama seperti sebelumnya)
       const updatedSlot = await SlotStatus.findOneAndUpdate(
         { slot_id: payload.slot_id },
         { status: payload.status, zone: payload.zone || 'Umum' },
-        { new: true, upsert: true, runValidators: true }
+        { returnDocument: 'after', upsert: true, runValidators: true }
       );
 
       console.log(`💾 Data tersimpan ke DB:`, updatedSlot.toObject());
-
-      // ✨ BARU: Setelah data tersimpan, langsung broadcast ke semua
-      // klien WebSocket yang sedang membuka dashboard/aplikasi
       broadcastSlotUpdate(updatedSlot.toObject());
 
     } catch (error) {
