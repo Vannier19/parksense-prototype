@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 const BACKEND_URL = 'http://localhost:3000';
+const SENSOR_STALE_THRESHOLD_MS = 90 * 1000;
 
 // Device statis definitions untuk semua sensor
 const STATIC_DEVICES = {
@@ -21,7 +22,7 @@ const STATIC_DEVICES = {
     version: '2.1.0',
     lat: -6.8911,
     lng: 107.6119,
-    isReal: false, // Data dummy dinamis
+    isReal: true, // Data real dari sensor fisik Labtek 5-B
   },
   'device-003': {
     id: 'device-003',
@@ -79,25 +80,83 @@ const STATIC_DEVICES = {
   },
 };
 
-// Generate dummy status dinamis untuk device non-real
+const DUMMY_DEVICE_PROFILES = {
+  'device-003': { total: 24, occupancyMin: 0.25, occupancyMax: 0.7, batteryMin: 74, batteryMax: 97, offlineChance: 0.08, lagMin: 1, lagMax: 4 },
+  'device-004': { total: 24, occupancyMin: 0.2, occupancyMax: 0.65, batteryMin: 72, batteryMax: 96, offlineChance: 0.1, lagMin: 1, lagMax: 5 },
+  'device-005': { total: 18, occupancyMin: 0.3, occupancyMax: 0.8, batteryMin: 68, batteryMax: 95, offlineChance: 0.07, lagMin: 1, lagMax: 4 },
+  'device-006': { total: 18, occupancyMin: 0.25, occupancyMax: 0.75, batteryMin: 70, batteryMax: 94, offlineChance: 0.09, lagMin: 1, lagMax: 5 },
+  'device-007': { total: 12, occupancyMin: 0.15, occupancyMax: 0.6, batteryMin: 76, batteryMax: 99, offlineChance: 0.05, lagMin: 0, lagMax: 3 },
+  'device-008': { total: 12, occupancyMin: 0.1, occupancyMax: 0.55, batteryMin: 75, batteryMax: 98, offlineChance: 0.06, lagMin: 0, lagMax: 3 },
+};
+
+const getDummyProfile = (deviceId) => {
+  return DUMMY_DEVICE_PROFILES[deviceId] || {
+    total: 20,
+    occupancyMin: 0.2,
+    occupancyMax: 0.7,
+    batteryMin: 70,
+    batteryMax: 96,
+    offlineChance: 0.08,
+    lagMin: 1,
+    lagMax: 4,
+  };
+};
+
+const createSeed = (deviceId, bucket) => {
+  const input = `${deviceId}:${bucket}`;
+  let seed = 0;
+
+  for (let index = 0; index < input.length; index += 1) {
+    seed = (seed * 31 + input.charCodeAt(index)) >>> 0;
+  }
+
+  return seed;
+};
+
+const seededRandom = (seed) => {
+  const raw = Math.sin(seed) * 10000;
+  return raw - Math.floor(raw);
+};
+
+const randomIntFromSeed = (seed, min, max) => {
+  return Math.floor(seededRandom(seed) * (max - min + 1)) + min;
+};
+
+// Generate dummy status yang stabil per interval 10 detik untuk device non-real
 const generateDummyStatus = (deviceId) => {
-  const statuses = ['online', 'online', 'online', 'online', 'offline']; // 80% online
-  const randomStatus = statuses[Math.floor(Math.random() * statuses.length)];
+  const profile = getDummyProfile(deviceId);
+  const bucket = Math.floor(Date.now() / 10000);
+  const seed = createSeed(deviceId, bucket);
+  const randomStatus = seededRandom(seed) < profile.offlineChance ? 'offline' : 'online';
+  const offlineAge = randomIntFromSeed(seed + 1, 2, 12);
+  const battery = randomIntFromSeed(seed + 2, profile.batteryMin, profile.batteryMax);
+  const lagMinutes = randomIntFromSeed(seed + 3, profile.lagMin, profile.lagMax);
   
   return {
     status: randomStatus,
-    battery: randomStatus === 'online' ? Math.floor(Math.random() * 40) + 60 : 0, // 60-100% or 0
-    lastUpdate: `${Math.floor(Math.random() * 15) + 1} minute${Math.floor(Math.random() * 15) + 1 !== 1 ? 's' : ''} ago`,
+    battery: randomStatus === 'online' ? battery : Math.max(0, 100 - offlineAge * 8),
+    lastUpdate: randomStatus === 'online'
+      ? `${lagMinutes} minute${lagMinutes !== 1 ? 's' : ''} ago`
+      : `${offlineAge} minute${offlineAge !== 1 ? 's' : ''} ago`,
   };
 };
 
 // Generate dummy sensor data untuk device non-real
 const generateDummySensorData = (deviceId) => {
-  const dummyData = generateDummyStatus(deviceId);
+  const profile = getDummyProfile(deviceId);
+  const dummyStatus = generateDummyStatus(deviceId);
+  const bucket = Math.floor(Date.now() / 10000);
+  const seed = createSeed(`${deviceId}:sensor`, bucket);
+  const occupancyRatio = profile.occupancyMin + (seededRandom(seed) * (profile.occupancyMax - profile.occupancyMin));
+  const occupied = Math.max(0, Math.min(profile.total, Math.round(profile.total * occupancyRatio)));
+  const available = Math.max(0, profile.total - occupied);
+  const occupancy = profile.total > 0 ? Math.round((occupied / profile.total) * 100) : 0;
+
   return {
-    occupied: Math.floor(Math.random() * 100),
-    available: Math.floor(Math.random() * 150),
-    occupancy: Math.floor(Math.random() * 100),
+    occupied,
+    available,
+    occupancy,
+    ...dummyStatus,
   };
 };
 
@@ -108,7 +167,7 @@ export const useIoTDevices = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fetch real sensor data dari backend untuk Labtek 5-A
+  // Fetch real sensor data dari backend untuk Labtek 5 (dipakai oleh A dan B)
   const fetchRealSensorData = useCallback(async () => {
     try {
       const response = await axios.get(`${BACKEND_URL}/api/slots`);
@@ -147,6 +206,12 @@ export const useIoTDevices = () => {
       const occupied = labtek5Slots.filter(s => s.status === 1).length;
       const total = labtek5Slots.length || 250; // Default 250 jika tidak ada data
       const occupancyPercent = total > 0 ? Math.round((occupied / total) * 100) : 0;
+      const latestUpdate = labtek5Slots.reduce((latest, slot) => {
+        const updatedAt = slot.updatedAt ? new Date(slot.updatedAt).getTime() : 0;
+        return Math.max(latest, updatedAt);
+      }, 0);
+      const isSensorFresh = latestUpdate > 0 && (Date.now() - latestUpdate) <= SENSOR_STALE_THRESHOLD_MS;
+      const sensorStatus = isSensorFresh ? 'online' : 'offline';
 
       setRealSensorData({
         occupied,
@@ -154,8 +219,8 @@ export const useIoTDevices = () => {
         total,
         occupancy: occupancyPercent,
         battery: 85 + Math.random() * 15, // 85-100%
-        status: 'online',
-        lastUpdate: 'Just now',
+        status: sensorStatus,
+        lastUpdate: isSensorFresh ? 'Just now' : (latestUpdate ? new Date(latestUpdate).toLocaleTimeString('id-ID') : 'No recent data'),
       });
 
       setIsConnected(true);
@@ -172,7 +237,7 @@ export const useIoTDevices = () => {
         total: 250,
         occupancy: 85,
         battery: 88,
-        status: 'online',
+        status: 'offline',
         lastUpdate: '2 minutes ago',
       });
     }
@@ -192,12 +257,10 @@ export const useIoTDevices = () => {
         };
       } else {
         // Device dummy: generate data dinamis
-        const dummyStatus = generateDummyStatus(key);
+        const dummyStatus = generateDummySensorData(key);
         return {
           ...staticData,
-          status: dummyStatus.status,
-          battery: dummyStatus.battery,
-          lastUpdate: dummyStatus.lastUpdate,
+          ...dummyStatus,
           type: 'Parking Sensor',
         };
       }

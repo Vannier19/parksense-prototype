@@ -7,6 +7,7 @@ const cors    = require('cors'); // ✨ BARU
 
 const connectDB       = require('./src/config/db');
 const slotRoutes      = require('./src/routes/slotRoutes');
+const gateRoutes      = require('./src/routes/gateRoutes');
 const connectMQTT     = require('./src/services/mqttService');
 const { initSocket }  = require('./src/services/socketService');
 
@@ -33,6 +34,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ROUTES
 // ============================================================
 app.use('/api/slots', slotRoutes);
+app.use('/api/gate', gateRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({

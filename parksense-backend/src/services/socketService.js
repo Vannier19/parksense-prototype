@@ -78,5 +78,29 @@ const broadcastSlotUpdate = (slotData) => {
   );
 };
 
-// Ekspor kedua fungsi
-module.exports = { initSocket, broadcastSlotUpdate };
+// ============================================================
+// FUNGSI 3: Broadcast gate events ke SEMUA klien yang terhubung
+// Dipanggil dari gateController.js setiap kali ada QR scan atau gate event
+// ============================================================
+const broadcastGateEvent = (eventType, eventData) => {
+  // Pastikan io sudah diinisialisasi sebelum broadcast
+  if (!io) {
+    console.warn('⚠️ [Socket.io] Belum diinisialisasi, skip broadcast.');
+    return;
+  }
+
+  // io.emit = kirim ke SEMUA klien yang sedang terhubung
+  io.emit('gate_event', {
+    event: eventType,
+    data: eventData,
+    timestamp: new Date().toISOString(),
+  });
+
+  console.log(
+    `📡 [Socket.io] Broadcast → gate_event: ${eventType}`,
+    eventData
+  );
+};
+
+// Ekspor fungsi
+module.exports = { initSocket, broadcastSlotUpdate, broadcastGateEvent };
