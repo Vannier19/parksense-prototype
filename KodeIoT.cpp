@@ -34,7 +34,7 @@ const char* CLIENT_ID     = "esp32-parksense-A01";
 // --- Identitas Slot ---
 // Ganti sesuai slot parkir yang dipasangi sensor ini
 const char* SLOT_ID       = "A-01";
-const char* SLOT_ZONE     = "Labtek V";
+const char* SLOT_ZONE     = "Labtek 5";  // PENTING: Harus sesuai dengan backend format!
 
 // ============================================================
 // KONFIGURASI PIN
@@ -121,6 +121,7 @@ void connectMQTT() {
 
     if (mqttClient.connect(CLIENT_ID)) {
       Serial.println(" ✅ Terhubung!");
+      return;  // ← FIX: Jangan loop terus jika sudah connect
     } else {
       Serial.print(" ❌ Gagal, kode error: ");
       Serial.println(mqttClient.state());
@@ -195,6 +196,7 @@ void gerakServo(bool buka) {
 void kirimStatusMQTT(int status, float jarak) {
   // Pastikan koneksi MQTT masih aktif
   if (!mqttClient.connected()) {
+    Serial.println("⚠️ MQTT terputus, reconnect...");
     connectMQTT();
   }
 
@@ -212,19 +214,28 @@ void kirimStatusMQTT(int status, float jarak) {
   char pesanJSON[256];
   serializeJson(doc, pesanJSON);
 
+  Serial.print("📦 JSON payload: ");
+  Serial.println(pesanJSON);
+
   // Publish ke broker
   bool berhasil = mqttClient.publish(MQTT_TOPIC, pesanJSON, true);
 
   if (berhasil) {
     Serial.print("📤 MQTT Publish ✅ | Slot: ");
     Serial.print(SLOT_ID);
+    Serial.print(" | Zone: ");
+    Serial.print(SLOT_ZONE);
     Serial.print(" | Status: ");
     Serial.print(status == 1 ? "🔴 TERISI" : "🟢 KOSONG");
     Serial.print(" | Jarak: ");
     Serial.print((int)jarak);
     Serial.println(" cm");
   } else {
-    Serial.println("❌ MQTT Publish GAGAL! State: " + String(mqttClient.state()));
+    Serial.print("❌ MQTT Publish GAGAL! ");
+    Serial.print("State: ");
+    Serial.print(mqttClient.state());
+    Serial.print(" | Connected: ");
+    Serial.println(mqttClient.connected() ? "YES" : "NO");
   }
 }
 
@@ -257,12 +268,15 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("=================================");
+  Serial.println("\n=================================");
   Serial.println("  🚗 PARKSENSE — ESP32 Firmware");
   Serial.println("=================================");
   Serial.print("Slot ID  : "); Serial.println(SLOT_ID);
   Serial.print("Zona     : "); Serial.println(SLOT_ZONE);
-  Serial.println("=================================");
+  Serial.print("MQTT Broker: "); Serial.println(MQTT_BROKER);
+  Serial.print("MQTT Topic : "); Serial.println(MQTT_TOPIC);
+  Serial.print("WiFi SSID  : "); Serial.println(WIFI_SSID);
+  Serial.println("=================================\n");
 
   // Setup pin sensor
   pinMode(PIN_TRIG, OUTPUT);
@@ -294,7 +308,7 @@ void setup() {
   // Hubungkan ke MQTT
   connectMQTT();
 
-  Serial.println("\n✅ Sistem siap! Mulai monitoring...\n");
+  Serial.println("✅ Sistem siap! Mulai monitoring...\n");
 }
 
 // ============================================================
@@ -317,25 +331,25 @@ void loop() {
 
   if (adaObjek) {
     if (!sedangValidasi) {
-      // Objek baru terdeteksi → mulai timer validasi
-      waktuDeteksiAwal = millis();
-      sedangValidasi   = true;
-      Serial.print("👀 Objek terdeteksi di jarak ");
-      Serial.print((int)jarak);
-      Serial.println(" cm — memulai validasi...");
-    } else {
-      // Objek masih ada → cek apakah sudah melewati waktu validasi
+      // Objek baru terdeteksi → mulai timer validasi (hanya jika belum TERISI)
+      if (statusSlotSaatIni != 1) {  // ← FIX: Hanya validasi jika status belum TERISI
+        waktuDeteksiAwal = millis();
+        sedangValidasi   = true;
+        Serial.print("👀 Objek terdeteksi di jarak ");
+        Serial.print((int)jarak);
+        Serial.println(" cm — memulai validasi...");
+      }
+    } else if (statusSlotSaatIni != 1) {
+      // Objek masih ada & status belum TERISI → cek apakah sudah melewati waktu validasi
       unsigned long selisihWaktu = millis() - waktuDeteksiAwal;
 
       if (selisihWaktu >= DELAY_VALIDATION_MS) {
         // ✅ Validasi selesai → slot TERISI
-        if (statusSlotSaatIni != 1) {
-          statusSlotSaatIni = 1;
-          setLED(1);
-          kirimStatusMQTT(1, jarak);
-          Serial.println("🔒 Status TERKUNCI: TERISI");
-        }
-        sedangValidasi = false; // Reset flag validasi
+        statusSlotSaatIni = 1;
+        setLED(1);
+        kirimStatusMQTT(1, jarak);
+        Serial.println("🔒 Status TERKUNCI: TERISI");
+        // ← JANGAN reset sedangValidasi di sini!
       } else {
         // Masih dalam periode validasi, tampilkan countdown
         Serial.print("⏳ Validasi: ");
@@ -345,11 +359,12 @@ void loop() {
         Serial.println(" detik");
       }
     }
+    // Jika status sudah TERISI dan masih ada objek, tidak perlu validasi lagi
   } else {
-    // Tidak ada objek → reset validasi
+    // Tidak ada objek → reset validasi dan ubah status jadi KOSONG
     if (sedangValidasi) {
       Serial.println("↩️  Objek menghilang, validasi dibatalkan");
-      sedangValidasi = false;
+      sedangValidasi = false;  // ← Reset hanya di sini!
     }
 
     // Jika sebelumnya terisi, ubah jadi kosong

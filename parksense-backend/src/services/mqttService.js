@@ -50,8 +50,18 @@ const connectMQTT = () => {
         { returnDocument: 'after', upsert: true, runValidators: true }
       );
 
-      console.log(`💾 Data tersimpan ke DB:`, updatedSlot.toObject());
-      broadcastSlotUpdate(updatedSlot.toObject());
+      const savedData = updatedSlot.toObject();
+      console.log(`💾 Data tersimpan ke DB:`, {
+        slot_id: savedData.slot_id,
+        zone: savedData.zone,
+        status: savedData.status,
+        updatedAt: savedData.updatedAt
+      });
+      
+      // ✨ DEBUG: Verifikasi zone yang disimpan
+      console.log(`🔍 Zone yang disimpan: "${savedData.zone}" (length: ${savedData.zone?.length})`);
+      
+      broadcastSlotUpdate(savedData);
 
     } catch (error) {
       console.error('❌ Gagal memproses pesan MQTT:', error.message);

@@ -11,6 +11,12 @@ const getAllSlots = async (req, res) => {
     // .sort({ updatedAt: -1 }) artinya urutkan dari yang terbaru
     const slots = await SlotStatus.find().sort({ updatedAt: -1 });
 
+    // 🔍 DEBUG: Log slots yang ditemukan dengan detail zone
+    console.log(`\n📡 GET /api/slots - Total slots: ${slots.length}`);
+    slots.forEach(slot => {
+      console.log(`   - ${slot.slot_id}: zone="${slot.zone}", status=${slot.status}`);
+    });
+
     // Kirim respons sukses (kode 200) beserta datanya dalam format JSON
     res.status(200).json({
       success: true,

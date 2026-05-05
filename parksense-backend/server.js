@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 
 // ✨ Izinkan semua origin mengakses API ini (penting untuk React dev server)
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,
 }));
